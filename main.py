@@ -20,26 +20,23 @@ DYNAMIC_CATEGORY_ID = int(os.getenv("DYNAMIC_CATEGORY_ID"))
 
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY, cache_discovery=False)
 
-# Mapping of trigger channels to roles and categories
+# Convert the channel names in TRIGGER_CHANNELS to their respective channel IDs (as integers)
 TRIGGER_CHANNELS = {
-    # Normal VC
-    "<#1206542741778210896>": "@everyone",
-    "<#1206543008263045150>": "<@&1293619059568541747>",
-    # Overwatch VC
-    "<#1206543033823400007>": "<@&1293619010897969184>",
-    # Roblox VC
-    "<#1293626844360474664>": "<@&1293619104627953704>",
-    # Minecraft VC
-    "<#1311375381369978992>": "<@&1311374496405393439>",
+    1206542741778210896: "@everyone",
+    1206543008263045150: 1293619059568541747,
+    1206543033823400007: 1293619010897969184,
+    1293626844360474664: 1293619104627953704,
+    1311375381369978992: 1311374496405393439,
 }
 
-# Configure logging
+
+# Ensure that the log file can handle Unicode characters
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler(),
+        logging.FileHandler('bot.log', encoding='utf-8'),
+        logging.StreamHandler()  # Optional: To log to the console with UTF-8 encoding
     ]
 )
 
@@ -121,7 +118,12 @@ async def delete_empty_vc(vc_id):
 async def on_ready():
     """Triggered when the bot connects to Discord."""
     logging.info(f"Logged in as {bot.user.name}")
-    check_new_video.start()  # Start the YouTube monitoring task
+
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        logging.error(f"Guild with ID {GUILD_ID} not found.")
+        return
+    logging.info(f"Successfully connected to guild: {guild.name}")
 
 
 @bot.event
@@ -133,21 +135,27 @@ async def on_voice_state_update(member, before, after):
     guild = bot.get_guild(GUILD_ID)
 
     # Check if the user joined one of the trigger channels
-    if after.channel and after.channel.name in TRIGGER_CHANNELS:
-        role_name = TRIGGER_CHANNELS[after.channel.name]  # Get the role name
-        role = discord.utils.get(guild.roles, name=role_name)  # Find the corresponding role
+    if after.channel and after.channel.id in TRIGGER_CHANNELS:  # Correctly checking by ID
+        role_id = TRIGGER_CHANNELS[after.channel.id]  # Get the role ID
+        role = discord.utils.get(guild.roles, id=role_id)  # Find the corresponding role by ID
 
         if not role:
-            logging.warning(f"Role '{role_name}' not found in guild.")
+            logging.warning(f"Role with ID '{role_id}' not found in guild.")
             return
 
-        # Generate a unique VC name
-        category_name = after.channel.name.split("-")[1]
-        vc_name = f"{category_name}-VC-{vc_counters[after.channel.name]}"
-        vc_counters[after.channel.name] += 1
+        # Extract the category name based on the channel name or other identifiers
+        category_name = after.channel.name.split("-")[1]  # Assuming naming conventions for VC (ow, wz, rbx, mc)
 
-        # Create a new VC under the specified category
-        category = discord.utils.get(guild.categories, id=DYNAMIC_CATEGORY_ID)
+        # Count how many active channels of this type exist in the specified category
+        active_channels = [vc for vc in guild.voice_channels if vc.category and vc.category.id == DYNAMIC_CATEGORY_ID and category_name in vc.name]
+        active_count = len(active_channels)
+
+        # Generate a unique VC name based on the active count
+        vc_name = f"{category_name}-VC-{active_count + 1}"  # Increment the count for new channel
+        logging.info(f"Creating a new VC: {vc_name} under category {after.channel.category.name}")
+
+        # Ensure category IDs are correct and fetch the correct category
+        category = discord.utils.get(guild.categories, id=DYNAMIC_CATEGORY_ID)  # Ensure this is the correct category ID
         if not category:
             logging.warning(f"Category with ID {DYNAMIC_CATEGORY_ID} not found.")
             return
@@ -157,9 +165,10 @@ async def on_voice_state_update(member, before, after):
             role: discord.PermissionOverwrite(connect=True),  # Role: access
         }
 
+        # Create a new VC under the specified category
         new_vc = await guild.create_voice_channel(name=vc_name, category=category, overwrites=overwrites)
         dynamic_vcs[new_vc.id] = new_vc  # Track the VC
-        logging.info(f"Created new VC: {vc_name}")
+        logging.info(f"Created new VC: {vc_name} under category {category.name}")
 
         # Move the user to the newly created VC
         await member.move_to(new_vc)
