@@ -1,5 +1,5 @@
 import discord
-from discord.ext import tasks
+from discord.ext import tasks, commands
 from googleapiclient.discovery import build
 import aiohttp
 import asyncio
@@ -29,7 +29,6 @@ TRIGGER_CHANNELS = {
     1311375381369978992: 1311374496405393439,
 }
 
-
 # Ensure that the log file can handle Unicode characters
 logging.basicConfig(
     level=logging.INFO,
@@ -40,18 +39,20 @@ logging.basicConfig(
     ]
 )
 
-# Create the bot
+# Create the bot with commands extension
 intents = discord.Intents.default()
 intents.voice_states = True
 intents.guilds = True
 intents.members = True  # Needed for voice channel and role management
-bot = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Track dynamically created VCs and their expiration timers
 dynamic_vcs = {}
 vc_counters = {key: 1 for key in TRIGGER_CHANNELS.keys()}  # Counter for VC numbering
 last_video_id = None  # Track the last posted YouTube video ID
 
+# User ID that is allowed to use the log command
+ALLOWED_USER_ID = 529411877336383491
 
 async def get_latest_video(channel_id):
     """Fetch the latest video or stream from a YouTube channel."""
@@ -66,6 +67,8 @@ async def get_latest_video(channel_id):
                 if response.status != 200:
                     logging.error(f"Error fetching video: {data}")
                     return None, None, None, None
+
+                logging.info(f"API response: {data}")  # Add this log to debug API response
 
                 if "items" in data and len(data["items"]) > 0:
                     video = data["items"][0]
@@ -112,7 +115,6 @@ async def delete_empty_vc(vc_id):
             break
 
 
-
 # Bot Events
 @bot.event
 async def on_ready():
@@ -124,14 +126,16 @@ async def on_ready():
         logging.error(f"Guild with ID {GUILD_ID} not found.")
         return
     logging.info(f"Successfully connected to guild: {guild.name}")
+    check_new_video.start()
+    await bot.tree.sync()
 
 
 @bot.event
 async def on_voice_state_update(member, before, after):
     """
-    Triggered when a user's voice state changes (e.g., joining/leaving a VC).
-    Handles dynamic VC creation and monitoring.
-    """
+      Triggered when a user's voice state changes (e.g., joining/leaving a VC).
+      Handles dynamic VC creation and monitoring.
+      """
     guild = bot.get_guild(GUILD_ID)
 
     # Check if the user joined one of the trigger channels
@@ -147,7 +151,8 @@ async def on_voice_state_update(member, before, after):
         category_name = after.channel.name.split("-")[1]  # Assuming naming conventions for VC (ow, wz, rbx, mc)
 
         # Count how many active channels of this type exist in the specified category
-        active_channels = [vc for vc in guild.voice_channels if vc.category and vc.category.id == DYNAMIC_CATEGORY_ID and category_name in vc.name]
+        active_channels = [vc for vc in guild.voice_channels if
+                           vc.category and vc.category.id == DYNAMIC_CATEGORY_ID and category_name in vc.name]
         active_count = len(active_channels)
 
         # Generate a unique VC name based on the active count
@@ -185,23 +190,11 @@ async def on_voice_state_update(member, before, after):
             logging.info(f"VC {vc.name} is empty. Scheduling deletion.")
             await asyncio.create_task(delete_empty_vc(vc_id))
 
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    """
-    Triggered when a channel is deleted.
-    Cleans up the `dynamic_vcs` dictionary.
-    """
-    if channel.id in dynamic_vcs:
-        logging.info(f"VC {channel.name} was manually deleted.")
-        dynamic_vcs.pop(channel.id, None)
-
-
-# Background Tasks
 @tasks.loop(minutes=5)
 async def check_new_video():
     """Periodically checks for new videos or live streams and posts updates."""
     global last_video_id
+    logging.info("Checking for new video...")  # Add this log to confirm the task runs
 
     video_id, video_title, video_url, live_broadcast_content = await get_latest_video(YOUTUBE_CHANNEL_ID)
 
@@ -226,10 +219,37 @@ async def check_new_video():
             logging.error(f"Failed to fetch Discord channel with ID {DISCORD_NOTIFICATION_CHANNEL_ID}")
 
 
-@check_new_video.before_loop
-async def before_check_new_video():
-    """Wait until the bot is ready before starting the task."""
-    await bot.wait_until_ready()
+@bot.event
+async def on_guild_channel_delete(channel):
+    """
+      Triggered when a channel is deleted.
+      Cleans up the `dynamic_vcs` dictionary.
+      """
+    if channel.id in dynamic_vcs:
+        del dynamic_vcs[channel.id]
+        logging.info(f"Deleted dynamic VC: {channel.name}")
 
-# Run the bot
+
+@bot.tree.command(name="log", description="Get the application log")
+async def log_command(interaction: discord.Interaction):
+    """This command fetches the log, but only if the user is authorized."""
+    if interaction.user.id != ALLOWED_USER_ID:
+        await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
+        return
+
+    try:
+        with open('bot.log', 'r', encoding='utf-8') as log_file:
+            log_content = log_file.read()
+
+        # Send the log content back in a message, truncated for large files
+        if len(log_content) > 2000:
+            log_content = log_content[:2000]  # Discord has a 2000 character limit per message
+
+        await interaction.response.send_message(f"```{log_content}```")
+
+    except Exception as e:
+        logging.error(f"Error fetching log: {e}")
+        await interaction.response.send_message("There was an error fetching the log.", ephemeral=True)
+
+# Running the bot
 bot.run(DISCORD_BOT_TOKEN)
