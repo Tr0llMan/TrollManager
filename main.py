@@ -6,11 +6,12 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 import os
+from datetime import datetime
 
-# Load environment variables from the .env file
+# Loads variables from .env
 load_dotenv()
 
-# Retrieve variables with corrected names
+# Retrieve variables from .env
 YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID")
@@ -18,11 +19,13 @@ DISCORD_NOTIFICATION_CHANNEL_ID = int(os.getenv("DISCORD_NOTIFICATION_CHANNEL_ID
 GUILD_ID = int(os.getenv("GUILD_ID"))
 DYNAMIC_CATEGORY_ID = int(os.getenv("DYNAMIC_CATEGORY_ID"))
 
+# Allow custom logging from bot.log files to only be accessible by a certain user (e.g. Owner)
+ALLOWED_USER_ID = 529411877336383491
+
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY, cache_discovery=False)
 
-# Convert the channel names in TRIGGER_CHANNELS to their respective channel IDs (as integers)
 TRIGGER_CHANNELS = {
-    1206542741778210896: "@everyone",
+    1206542741778210896: 0,
     1206543008263045150: 1293619059568541747,
     1206543033823400007: 1293619010897969184,
     1293626844360474664: 1293619104627953704,
@@ -39,7 +42,6 @@ logging.basicConfig(
     ]
 )
 
-# Create the bot with commands extension
 intents = discord.Intents.default()
 intents.voice_states = True
 intents.guilds = True
@@ -50,9 +52,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 dynamic_vcs = {}
 vc_counters = {key: 1 for key in TRIGGER_CHANNELS.keys()}  # Counter for VC numbering
 last_video_id = None  # Track the last posted YouTube video ID
-
-# User ID that is allowed to use the log command
-ALLOWED_USER_ID = 529411877336383491
 
 async def get_latest_video(channel_id):
     """Fetch the latest video or stream from a YouTube channel."""
@@ -105,7 +104,7 @@ def generate_custom_message(video_title, video_url):
 async def delete_empty_vc(vc_id):
     """Checks every minute if a VC is empty, then deletes it if so."""
     while True:
-        await asyncio.sleep(60)  # Check every minute
+        await asyncio.sleep(60)
         guild = bot.get_guild(GUILD_ID)
         vc = guild.get_channel(vc_id)
         if vc and len(vc.members) == 0:
@@ -127,7 +126,7 @@ async def on_ready():
         return
     logging.info(f"Successfully connected to guild: {guild.name}")
     check_new_video.start()
-    await bot.tree.sync()
+    await bot.tree.sync()  # Sync new commands (updates every hour)
 
 
 @bot.event
@@ -179,7 +178,7 @@ async def on_voice_state_update(member, before, after):
         await member.move_to(new_vc)
         logging.info(f"Moved {member.display_name} to {vc_name}")
 
-        # Schedule VC deletion after 5 minutes of inactivity
+        # Just in case, doesn't activate the deletion unless there isn't anyone in the VCs
         await asyncio.create_task(delete_empty_vc(new_vc.id))
 
     # Check if the user left a dynamic VC
@@ -189,6 +188,7 @@ async def on_voice_state_update(member, before, after):
         if len(vc.members) == 0:  # If the VC is empty
             logging.info(f"VC {vc.name} is empty. Scheduling deletion.")
             await asyncio.create_task(delete_empty_vc(vc_id))
+
 
 @tasks.loop(minutes=5)
 async def check_new_video():
@@ -230,26 +230,53 @@ async def on_guild_channel_delete(channel):
         logging.info(f"Deleted dynamic VC: {channel.name}")
 
 
-@bot.tree.command(name="log", description="Get the application log")
+from datetime import datetime, timedelta
+
+@bot.tree.command(name="log", description="Get the last 10 minutes of the application log")
 async def log_command(interaction: discord.Interaction):
-    """This command fetches the log, but only if the user is authorized."""
+    """This command fetches log entries from the last 10 minutes if the user is authorized."""
     if interaction.user.id != ALLOWED_USER_ID:
         await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
         return
 
     try:
+        # Get the current time and calculate the cutoff time for 10 minutes ago
+        now = datetime.now()
+        ten_minutes_ago = now - timedelta(minutes=10)
+
         with open('bot.log', 'r', encoding='utf-8') as log_file:
-            log_content = log_file.read()
+            log_content = log_file.readlines()
 
-        # Send the log content back in a message, truncated for large files
-        if len(log_content) > 2000:
-            log_content = log_content[:2000]  # Discord has a 2000 character limit per message
+        recent_logs = []
+        for line in log_content:
+            try:
+                # Extract the timestamp from each log line (format: 'YYYY-MM-DD HH:MM:SS,MS - LEVEL - Message')
+                timestamp_str = line.split(' - ')[0]  # Split to get 'YYYY-MM-DD HH:MM:SS,MS'
+                log_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S,%f")
 
-        await interaction.response.send_message(f"```{log_content}```")
+                # Check if the log entry is within the last 10 minutes
+                if log_time >= ten_minutes_ago:
+                    recent_logs.append(line)
+            except ValueError:
+                # Skip lines that don't match the expected format
+                continue
+
+        if not recent_logs:
+            log_output = "No logs available for the last 10 minutes."
+        else:
+            log_output = ''.join(recent_logs)
+
+        # Truncate if the log output exceeds 2000 characters
+        if len(log_output) > 2000:
+            log_output = log_output[-1997:] + "..."
+
+        await interaction.response.send_message(f"```{log_output}```", ephemeral=True)
 
     except Exception as e:
-        logging.error(f"Error fetching log: {e}")
-        await interaction.response.send_message("There was an error fetching the log.", ephemeral=True)
+        logging.error(f"Error fetching recent logs: {e}")
+        await interaction.response.send_message("There was an error fetching the recent logs.", ephemeral=True)
+
+
 
 # Running the bot
 bot.run(DISCORD_BOT_TOKEN)
