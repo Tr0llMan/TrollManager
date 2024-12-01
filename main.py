@@ -6,12 +6,17 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# Loads variables from .env
+# Load environment variables
 load_dotenv()
 
-# Retrieve variables from .env
+# Twitch API Configuration
+TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
+TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+TWITCH_USERNAME = os.getenv("TWITCH_USERNAME")
+
+# YouTube API Configuration
 YOUTUBE_API_KEY = os.getenv("GOOGLE_API_KEY")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID")
@@ -19,39 +24,75 @@ DISCORD_NOTIFICATION_CHANNEL_ID = int(os.getenv("DISCORD_NOTIFICATION_CHANNEL_ID
 GUILD_ID = int(os.getenv("GUILD_ID"))
 DYNAMIC_CATEGORY_ID = int(os.getenv("DYNAMIC_CATEGORY_ID"))
 
-# Allow custom logging from bot.log files to only be accessible by a certain user (e.g. Owner)
-ALLOWED_USER_ID = 529411877336383491
-
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY, cache_discovery=False)
 
-TRIGGER_CHANNELS = {
-    1206542741778210896: 0,
-    1206543008263045150: 1293619059568541747,
-    1206543033823400007: 1293619010897969184,
-    1293626844360474664: 1293619104627953704,
-    1311375381369978992: 1311374496405393439,
-}
-
-# Ensure that the log file can handle Unicode characters
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
-        logging.StreamHandler()  # Optional: To log to the console with UTF-8 encoding
+        logging.StreamHandler()
     ]
 )
 
 intents = discord.Intents.default()
 intents.voice_states = True
 intents.guilds = True
-intents.members = True  # Needed for voice channel and role management
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Track dynamically created VCs and their expiration timers
+# Track dynamically created VCs and Twitch stream state
 dynamic_vcs = {}
-vc_counters = {key: 1 for key in TRIGGER_CHANNELS.keys()}  # Counter for VC numbering
-last_video_id = None  # Track the last posted YouTube video ID
+vc_counters = {}
+last_video_id = None
+is_twitch_live = False
+
+TRIGGER_CHANNELS = {
+    1206542741778210896: 0,  # Placeholder for default/no-role (adjust as needed)
+    1206543008263045150: 1293619059568541747,  # Warzone
+    1206543033823400007: 1293619010897969184,  # Overwatch
+    1293626844360474664: 1293619104627953704,  # Roblox
+    1311375381369978992: 1311374496405393439,  # Minecraft
+}
+
+async def get_twitch_access_token():
+    """Authenticate with Twitch API and get an access token."""
+    url = "https://id.twitch.tv/oauth2/token"
+    params = {
+        "client_id": TWITCH_CLIENT_ID,
+        "client_secret": TWITCH_CLIENT_SECRET,
+        "grant_type": "client_credentials"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, params=params) as response:
+            data = await response.json()
+            return data.get("access_token")
+
+async def check_twitch_stream():
+    """Check if the Twitch user is currently live."""
+    global is_twitch_live
+    access_token = await get_twitch_access_token()
+    url = f"https://api.twitch.tv/helix/streams?user_login={TWITCH_USERNAME}"
+    headers = {
+        "Client-ID": TWITCH_CLIENT_ID,
+        "Authorization": f"Bearer {access_token}"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            data = await response.json()
+            streams = data.get("data", [])
+            if streams:
+                if not is_twitch_live:
+                    is_twitch_live = True
+                    stream_title = streams[0]["title"]
+                    stream_url = f"https://www.twitch.tv/{TWITCH_USERNAME}"
+                    message = f"🔴 **{TWITCH_USERNAME} is now live on Twitch!**\n**Title:** {stream_title}\nWatch here: {stream_url}"
+                    channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
+                    if channel:
+                        await channel.send(message)
+            else:
+                is_twitch_live = False
 
 async def get_latest_video(channel_id):
     """Fetch the latest video or stream from a YouTube channel."""
@@ -63,47 +104,79 @@ async def get_latest_video(channel_id):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 data = await response.json()
-                if response.status != 200:
-                    logging.error(f"Error fetching video: {data}")
-                    return None, None, None, None
-
-                logging.info(f"API response: {data}")  # Add this log to debug API response
-
                 if "items" in data and len(data["items"]) > 0:
                     video = data["items"][0]
                     video_title = video["snippet"]["title"]
                     video_id = video["id"]["videoId"]
                     video_url = f"https://www.youtube.com/watch?v={video_id}"
-                    # Extract the liveBroadcastContent field
                     live_broadcast_content = video["snippet"].get("liveBroadcastContent", "none")
                     return video_id, video_title, video_url, live_broadcast_content
                 else:
-                    logging.warning("No videos found for the channel.")
                     return None, None, None, None
     except Exception as e:
         logging.error(f"Error fetching video: {e}")
         return None, None, None, None
 
-
 def generate_custom_message(video_title, video_url):
-    """Generate a custom message based on the video title."""
-    if "Overwatch 2" in video_title:
-        return f"🎮 A new Overwatch 2 video is out <@&1293619010897969184>! Check it out: {video_url}"
-    elif "Minecraft" in video_title:
-        return f"🌍 A new Minecraft adventure awaits <@&1311374496405393439>! Watch here: {video_url}"
-    elif "Roblox" in video_title:
-        return f"🤖 A new Roblox video is out <@&1293619104627953704>! Check it out: {video_url}"
-    elif "Dev Log" in video_title:
-        return f"📓 A new Dev Log has been released <@&1311378340564959354>! Check it out: {video_url}"
-    elif "Warzone" in video_title:
-        return f"🔫 A new Warzone video got posted <@&1293619059568541747>! Show us some love: {video_url}"
-    else:
-        return f"New video uploaded <@&1311377083313950730>!: **{video_title}**\nWatch here: {video_url}"
+    """Generate a custom message based on the video title and content type."""
+    tags = {
+        "Overwatch 2": "<@&1293619010897969184>",  # Overwatch Role
+        "Minecraft": "<@&1311374496405393439>",  # Minecraft Role
+        "Roblox": "<@&1293619104627953704>",  # Roblox Role
+        "Dev Log": "<@&1311378340564959354>",  # Dev Log Role
+        "Warzone": "<@&1293619059568541747>"  # Warzone Role
+    }
+
+    for keyword, tag in tags.items():
+        if keyword in video_title:
+            return f"🎮 **New {keyword} video is out {tag}!**\nCheck it out: {video_url}"
+
+    return f"🎥 **New video uploaded:** **{video_title}** <@&1311377083313950730>\nWatch here: {video_url}"
+
+
+@tasks.loop(minutes=5)
+async def check_new_video():
+    """Periodically checks for new YouTube videos and Twitch streams."""
+    global last_video_id
+    video_id, video_title, video_url, live_broadcast_content = await get_latest_video(YOUTUBE_CHANNEL_ID)
+    if video_id and video_id != last_video_id:
+        last_video_id = video_id
+        if live_broadcast_content == "live":
+            message = f"🔴 **Live Stream Alert!** {video_title}\nWatch here: {video_url}"
+        else:
+            message = generate_custom_message(video_title, video_url)
+        channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
+        if channel:
+            await channel.send(message)
+    await check_twitch_stream()
+
+
+@bot.event
+async def on_ready():
+    logging.info(f"Logged in as {bot.user.name}")
+    check_new_video.start()
+
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    """Handle dynamic VC creation and deletion."""
+    if after.channel and after.channel.id in TRIGGER_CHANNELS:
+        role_id = TRIGGER_CHANNELS[after.channel.id]
+        guild = bot.get_guild(GUILD_ID)
+        role = discord.utils.get(guild.roles, id=role_id)
+        if role:
+            category = discord.utils.get(guild.categories, id=DYNAMIC_CATEGORY_ID)
+            vc_name = f"{role.name}-{vc_counters.get(after.channel.id, 1)}"
+            vc_counters[after.channel.id] = vc_counters.get(after.channel.id, 1) + 1
+            new_vc = await guild.create_voice_channel(name=vc_name, category=category)
+            await member.move_to(new_vc)
+            dynamic_vcs[new_vc.id] = new_vc.id
+            await asyncio.create_task(delete_empty_vc(new_vc.id))
 
 
 async def delete_empty_vc(vc_id):
-    """Checks every minute if a VC is empty, then deletes it if so."""
-    while True:
+    """Delete a VC if it is empty after checking every minute for up to 5 minutes."""
+    for _ in range(5):  # Check 5 times (every minute)
         await asyncio.sleep(60)
         guild = bot.get_guild(GUILD_ID)
         vc = guild.get_channel(vc_id)
@@ -111,172 +184,7 @@ async def delete_empty_vc(vc_id):
             logging.info(f"Deleting empty VC: {vc.name}")
             await vc.delete()
             dynamic_vcs.pop(vc_id, None)
-            break
-
-
-# Bot Events
-@bot.event
-async def on_ready():
-    """Triggered when the bot connects to Discord."""
-    logging.info(f"Logged in as {bot.user.name}")
-
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        logging.error(f"Guild with ID {GUILD_ID} not found.")
-        return
-    logging.info(f"Successfully connected to guild: {guild.name}")
-    check_new_video.start()
-    await bot.tree.sync()  # Sync new commands (updates every hour)
-
-
-@bot.event
-async def on_voice_state_update(member, before, after):
-    """
-      Triggered when a user's voice state changes (e.g., joining/leaving a VC).
-      Handles dynamic VC creation and monitoring.
-      """
-    guild = bot.get_guild(GUILD_ID)
-
-    # Check if the user joined one of the trigger channels
-    if after.channel and after.channel.id in TRIGGER_CHANNELS:  # Correctly checking by ID
-        role_id = TRIGGER_CHANNELS[after.channel.id]  # Get the role ID
-        role = discord.utils.get(guild.roles, id=role_id)  # Find the corresponding role by ID
-
-        if not role:
-            logging.warning(f"Role with ID '{role_id}' not found in guild.")
             return
+    logging.info(f"VC {vc_id} still has members, skipping deletion.")
 
-        # Extract the category name based on the channel name or other identifiers
-        category_name = after.channel.name.split("-")[1]  # Assuming naming conventions for VC (ow, wz, rbx, mc)
-
-        # Count how many active channels of this type exist in the specified category
-        active_channels = [vc for vc in guild.voice_channels if
-                           vc.category and vc.category.id == DYNAMIC_CATEGORY_ID and category_name in vc.name]
-        active_count = len(active_channels)
-
-        # Generate a unique VC name based on the active count
-        vc_name = f"{category_name}-VC-{active_count + 1}"  # Increment the count for new channel
-        logging.info(f"Creating a new VC: {vc_name} under category {after.channel.category.name}")
-
-        # Ensure category IDs are correct and fetch the correct category
-        category = discord.utils.get(guild.categories, id=DYNAMIC_CATEGORY_ID)  # Ensure this is the correct category ID
-        if not category:
-            logging.warning(f"Category with ID {DYNAMIC_CATEGORY_ID} not found.")
-            return
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(connect=False),  # Default: no access
-            role: discord.PermissionOverwrite(connect=True),  # Role: access
-        }
-
-        # Create a new VC under the specified category
-        new_vc = await guild.create_voice_channel(name=vc_name, category=category, overwrites=overwrites)
-        dynamic_vcs[new_vc.id] = new_vc  # Track the VC
-        logging.info(f"Created new VC: {vc_name} under category {category.name}")
-
-        # Move the user to the newly created VC
-        await member.move_to(new_vc)
-        logging.info(f"Moved {member.display_name} to {vc_name}")
-
-        # Just in case, doesn't activate the deletion unless there isn't anyone in the VCs
-        await asyncio.create_task(delete_empty_vc(new_vc.id))
-
-    # Check if the user left a dynamic VC
-    if before.channel and before.channel.id in dynamic_vcs:
-        vc_id = before.channel.id
-        vc = dynamic_vcs[vc_id]
-        if len(vc.members) == 0:  # If the VC is empty
-            logging.info(f"VC {vc.name} is empty. Scheduling deletion.")
-            await asyncio.create_task(delete_empty_vc(vc_id))
-
-
-@tasks.loop(minutes=5)
-async def check_new_video():
-    """Periodically checks for new videos or live streams and posts updates."""
-    global last_video_id
-    logging.info("Checking for new video...")  # Add this log to confirm the task runs
-
-    video_id, video_title, video_url, live_broadcast_content = await get_latest_video(YOUTUBE_CHANNEL_ID)
-
-    if video_id and video_id != last_video_id:
-        last_video_id = video_id  # Update the last video ID
-        logging.info(f"New content detected: {video_title} ({live_broadcast_content})")
-
-        # Determine the type of message based on content type
-        if live_broadcast_content == "live":
-            message = f"🔴 **Live Stream Alert <@&1311374441649012847>!** {video_title}\nWatch here: {video_url}"
-        elif live_broadcast_content == "upcoming":
-            message = f"📅 **Upcoming Live Stream <@&1311374441649012847>!** {video_title}\nWatch here: {video_url}"
-        else:
-            message = generate_custom_message(video_title, video_url)  # Use the existing video message logic
-
-        # Post the message in the notification channel
-        channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
-        if channel:
-            await channel.send(message)
-            logging.info(f"Posted update in channel {DISCORD_NOTIFICATION_CHANNEL_ID}: {message}")
-        else:
-            logging.error(f"Failed to fetch Discord channel with ID {DISCORD_NOTIFICATION_CHANNEL_ID}")
-
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    """
-      Triggered when a channel is deleted.
-      Cleans up the `dynamic_vcs` dictionary.
-      """
-    if channel.id in dynamic_vcs:
-        del dynamic_vcs[channel.id]
-        logging.info(f"Deleted dynamic VC: {channel.name}")
-
-
-from datetime import datetime, timedelta
-
-@bot.tree.command(name="log", description="Get the last 10 minutes of the application log")
-async def log_command(interaction: discord.Interaction):
-    """This command fetches log entries from the last 10 minutes if the user is authorized."""
-    if interaction.user.id != ALLOWED_USER_ID:
-        await interaction.response.send_message("You are not authorized to use this command.", ephemeral=True)
-        return
-
-    try:
-        # Get the current time and calculate the cutoff time for 10 minutes ago
-        now = datetime.now()
-        ten_minutes_ago = now - timedelta(minutes=10)
-
-        with open('bot.log', 'r', encoding='utf-8') as log_file:
-            log_content = log_file.readlines()
-
-        recent_logs = []
-        for line in log_content:
-            try:
-                # Extract the timestamp from each log line (format: 'YYYY-MM-DD HH:MM:SS,MS - LEVEL - Message')
-                timestamp_str = line.split(' - ')[0]  # Split to get 'YYYY-MM-DD HH:MM:SS,MS'
-                log_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S,%f")
-
-                # Check if the log entry is within the last 10 minutes
-                if log_time >= ten_minutes_ago:
-                    recent_logs.append(line)
-            except ValueError:
-                # Skip lines that don't match the expected format
-                continue
-
-        if not recent_logs:
-            log_output = "No logs available for the last 10 minutes."
-        else:
-            log_output = ''.join(recent_logs)
-
-        # Truncate if the log output exceeds 2000 characters
-        if len(log_output) > 2000:
-            log_output = log_output[-1997:] + "..."
-
-        await interaction.response.send_message(f"```{log_output}```", ephemeral=True)
-
-    except Exception as e:
-        logging.error(f"Error fetching recent logs: {e}")
-        await interaction.response.send_message("There was an error fetching the recent logs.", ephemeral=True)
-
-
-
-# Running the bot
 bot.run(DISCORD_BOT_TOKEN)
