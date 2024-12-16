@@ -23,6 +23,22 @@ DISCORD_NOTIFICATION_CHANNEL_ID = int(os.getenv("DISCORD_NOTIFICATION_CHANNEL_ID
 GUILD_ID = int(os.getenv("GUILD_ID"))
 DYNAMIC_CATEGORY_ID = int(os.getenv("DYNAMIC_CATEGORY_ID"))
 
+# Easier configurations
+ROLE_STREAM = "<@&1311374441649012847>"
+ROLE_YOUTUBE = "<@&1311377083313950730>"
+ROLE_OVERWATCH = "<@&1293619010897969184>"
+ROLE_WARZONE = "<@&1293619059568541747>"
+ROLE_MINECRAFT = "<@&1311374496405393439>"
+ROLE_ROBLOX = "<@&1293619104627953704>"
+
+TRIGGER_CHANNELS = {
+    1206542741778210896: 1098638128643846144,  # Placeholder for default/no-role (adjust as needed)
+    1206543008263045150: 1293619059568541747,  # Warzone
+    1206543033823400007: 1293619010897969184,  # Overwatch
+    1293626844360474664: 1293619104627953704,  # Roblox
+    1311375381369978992: 1311374496405393439,  # Minecraft
+}
+
 youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY, cache_discovery=False)
 
 # Set up logging
@@ -46,22 +62,6 @@ dynamic_vcs = {}
 vc_counters = {}
 last_video_id = None
 is_twitch_live = False
-
-# Will add to make role management easier, maybe putting it into a list later on
-# ROLE_STREAM =
-# ROLE_YOUTUBE =
-# ROLE_OVERWATCH =
-# ROLE_WARZONE =
-# ROLE_MINECRAFT =
-# ROLE_ROBLOX =
-
-TRIGGER_CHANNELS = {
-    1206542741778210896: 0,  # Placeholder for default/no-role (adjust as needed)
-    1206543008263045150: 1293619059568541747,  # Warzone
-    1206543033823400007: 1293619010897969184,  # Overwatch
-    1293626844360474664: 1293619104627953704,  # Roblox
-    1311375381369978992: 1311374496405393439,  # Minecraft
-}
 
 async def get_twitch_access_token():
     """Authenticate with Twitch API and get an access token."""
@@ -94,7 +94,7 @@ async def check_twitch_stream():
                     is_twitch_live = True
                     stream_title = streams[0]["title"]
                     stream_url = f"https://www.twitch.tv/{TWITCH_USERNAME}"
-                    message = f"🔴 **{TWITCH_USERNAME} is now live on Twitch! <@&1311374441649012847>**\n**Title:** {stream_title}\nWatch here: {stream_url}"
+                    message = f"🔴 **{TWITCH_USERNAME} is now live on Twitch! {ROLE_STREAM}**\n**Title:** {stream_title}\nWatch here: {stream_url}"
                     channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
                     if channel:
                         await channel.send(message)
@@ -127,18 +127,18 @@ async def get_latest_video(channel_id):
 def generate_custom_message(video_title, video_url):
     """Generate a custom message based on the video title and content type."""
     tags = {
-        "Overwatch 2": "<@&1293619010897969184>",  # Overwatch Role
-        "Minecraft": "<@&1311374496405393439>",  # Minecraft Role
-        "Roblox": "<@&1293619104627953704>",  # Roblox Role
-        "Dev Log": "<@&1311378340564959354>",  # Dev Log Role
-        "Warzone": "<@&1293619059568541747>"  # Warzone Role
+        "Overwatch 2": {ROLE_OVERWATCH},  # Overwatch Role
+        "Minecraft": {ROLE_MINECRAFT},  # Minecraft Role
+        "Roblox": {ROLE_ROBLOX},  # Roblox Role
+        "Dev Log": "<@&1311378340564959354>",  # NOTE: THIS IS OPTIONAL
+        "Warzone": {ROLE_WARZONE}  # Warzone Role
     }
 
     for keyword, tag in tags.items():
         if keyword in video_title:
             return f"🎮 **New {keyword} video is out {tag}!**\nCheck it out: {video_url}"
 
-    return f"🎥 **New video uploaded:** **{video_title}** <@&1311377083313950730>\nWatch here: {video_url}"
+    return f"🎥 **New video uploaded:** **{video_title}** {ROLE_YOUTUBE}\nWatch here: {video_url}"
 
 
 @tasks.loop(minutes=5)
@@ -149,7 +149,7 @@ async def check_new_video():
     if video_id and video_id != last_video_id:
         last_video_id = video_id
         if live_broadcast_content == "live":
-            message = f"🔴 **Live Stream Alert! <@&1311374441649012847>** {video_title}\nWatch here: {video_url}"
+            message = f"🔴 **Live Stream Alert! {ROLE_STREAM}** {video_title}\nWatch here: {video_url}"
         else:
             message = generate_custom_message(video_title, video_url)
         channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
