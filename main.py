@@ -6,7 +6,6 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 import os
-from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -48,6 +47,14 @@ vc_counters = {}
 last_video_id = None
 is_twitch_live = False
 
+# Will add to make role management easier, maybe putting it into a list later on
+# ROLE_STREAM =
+# ROLE_YOUTUBE =
+# ROLE_OVERWATCH =
+# ROLE_WARZONE =
+# ROLE_MINECRAFT =
+# ROLE_ROBLOX =
+
 TRIGGER_CHANNELS = {
     1206542741778210896: 0,  # Placeholder for default/no-role (adjust as needed)
     1206543008263045150: 1293619059568541747,  # Warzone
@@ -87,7 +94,7 @@ async def check_twitch_stream():
                     is_twitch_live = True
                     stream_title = streams[0]["title"]
                     stream_url = f"https://www.twitch.tv/{TWITCH_USERNAME}"
-                    message = f"🔴 **{TWITCH_USERNAME} is now live on Twitch!**\n**Title:** {stream_title}\nWatch here: {stream_url}"
+                    message = f"🔴 **{TWITCH_USERNAME} is now live on Twitch! <@&1311374441649012847>**\n**Title:** {stream_title}\nWatch here: {stream_url}"
                     channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
                     if channel:
                         await channel.send(message)
@@ -142,7 +149,7 @@ async def check_new_video():
     if video_id and video_id != last_video_id:
         last_video_id = video_id
         if live_broadcast_content == "live":
-            message = f"🔴 **Live Stream Alert!** {video_title}\nWatch here: {video_url}"
+            message = f"🔴 **Live Stream Alert! <@&1311374441649012847>** {video_title}\nWatch here: {video_url}"
         else:
             message = generate_custom_message(video_title, video_url)
         channel = bot.get_channel(DISCORD_NOTIFICATION_CHANNEL_ID)
