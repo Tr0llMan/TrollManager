@@ -1,0 +1,4 @@
+discord.py==2.3.2
+google-api-python-client==2.154.0
+aiohttp==3.9.5
+python-dotenv==1.0.0
