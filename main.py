@@ -168,6 +168,128 @@ async def check_new_video_and_streams():
     await check_twitch_streams()
 
 
+@tree.command(name="set_dynamicvc", description="Configure dynamic voice channels.")
+@app_commands.describe(
+    host_category="The host category for trigger channels.",
+    dynamic_category="The dynamic category where new VCs will be created.",
+    vc_ids="Comma-separated list of trigger VC IDs.",
+    roles="Comma-separated list of associated roles (must match VC IDs).",
+)
+async def set_dynamicvc(
+    interaction: discord.Interaction,
+    host_category: discord.CategoryChannel,
+    dynamic_category: discord.CategoryChannel,
+    vc_ids: str,
+    roles: str,
+):
+    """Configure dynamic voice channels."""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "You do not have permission to use this command.", ephemeral=True
+        )
+        return
+
+    # Parse VC IDs and Roles
+    vc_id_list = [int(vc_id.strip()) for vc_id in vc_ids.split(",")]
+    role_id_list = [int(role_id.strip()) for role_id in roles.split(",")]
+
+    if len(vc_id_list) != len(role_id_list):
+        await interaction.response.send_message(
+            "The number of VC IDs and Roles must match.", ephemeral=True
+        )
+        return
+
+    # Update Dynamic VC Config
+    for vc_id, role_id in zip(vc_id_list, role_id_list):
+        DYNAMIC_VC_CONFIG["triggers"][vc_id] = role_id
+
+    # Update global dynamic category ID
+    DYNAMIC_CATEGORY_ID = dynamic_category.id
+
+    # Confirm the configuration
+    response = (
+        f"Dynamic VC configuration updated!\n\n"
+        f"**Host Category:** {host_category.name}\n"
+        f"**Dynamic Category:** {dynamic_category.name}\n"
+        f"**Trigger VC IDs and Roles:**\n" +
+        "\n".join([f"VC ID: {vc_id}, Role ID: {role_id}" for vc_id, role_id in zip(vc_id_list, role_id_list)])
+    )
+    await interaction.response.send_message(response, ephemeral=True)
+
+
+@tree.command(name="read_config", description="Read the current bot configuration.")
+async def read_config(interaction: discord.Interaction):
+    """Display the current configurations."""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "You do not have permission to use this command.", ephemeral=True
+        )
+        return
+
+    dynamic_vcs_config = "\n".join(
+        [f"VC ID: {trigger}, Role ID: {role}" for trigger, role in DYNAMIC_VC_CONFIG["triggers"].items()]
+    )
+    twitch_config = "\n".join([f"{streamer}: {role}" for streamer, role in TWITCH_CONFIG["streamers"].items()])
+    youtube_config = f"Channel ID: {YOUTUBE_CONFIG['channel_id']}\nRoles:\n" + \
+                     "\n".join([f"{keyword}: {role}" for keyword, role in YOUTUBE_CONFIG["roles"].items()])
+
+    response = (
+        f"**Current Bot Configuration:**\n\n"
+        f"**Dynamic VCs:**\n{dynamic_vcs_config}\n\n"
+        f"**Twitch Streamers:**\n{twitch_config}\n\n"
+        f"**YouTube Notifications:**\n{youtube_config}"
+    )
+    await interaction.response.send_message(f"```{response}```", ephemeral=True)
+
+
+@tree.command(name="set_inactivity_time", description="Set the maximum inactivity time for dynamic VCs.")
+@app_commands.describe(time="Maximum inactivity time in seconds.")
+async def set_inactivity_time(interaction: discord.Interaction, time: int):
+    """Set the inactivity timeout for dynamic VCs."""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "You do not have permission to use this command.", ephemeral=True
+        )
+        return
+
+    DYNAMIC_VC_CONFIG["max_inactive_time"] = time
+    await interaction.response.send_message(
+        f"Inactivity timeout for dynamic VCs has been updated to {time} seconds.", ephemeral=True
+    )
+
+
+@tree.command(name="add_streamer", description="Add a Twitch streamer for notifications.")
+@app_commands.describe(username="Twitch username.", role="Role ID for notifications.")
+async def add_streamer(interaction: discord.Interaction, username: str, role: str):
+    """Add a Twitch streamer."""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "You do not have permission to use this command.", ephemeral=True
+        )
+        return
+
+    TWITCH_CONFIG["streamers"][username] = role
+    await interaction.response.send_message(
+        f"Twitch streamer '{username}' added with notifications for role {role}.", ephemeral=True
+    )
+
+
+@tree.command(name="add_youtube", description="Add a YouTube keyword and associated role.")
+@app_commands.describe(keyword="Keyword to look for in video titles.", role="Role ID for notifications.")
+async def add_youtube(interaction: discord.Interaction, keyword: str, role: str):
+    """Add a YouTube keyword for notifications."""
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "You do not have permission to use this command.", ephemeral=True
+        )
+        return
+
+    YOUTUBE_CONFIG["roles"][keyword] = role
+    await interaction.response.send_message(
+        f"Keyword '{keyword}' added for YouTube notifications with role {role}.", ephemeral=True
+    )
+
+
 @bot.event
 async def on_ready():
     logging.info(f"Logged in as {bot.user.name}")
