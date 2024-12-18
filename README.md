@@ -1,4 +1,4 @@
-# Discord Bot with Dynamic Configuration and Notifications
+# TrollMan's Discord server Manager!
 
 This Discord bot provides a range of automated features, including dynamic voice channel management, YouTube video notifications, Twitch stream notifications, and easy-to-use slash commands for configuration.
 
