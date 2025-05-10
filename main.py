@@ -182,7 +182,7 @@ async def set_dynamicvc(
     vc_ids: str,
     roles: str,
 ):
-    """Configure dynamic voice channels."""
+    """Configure dynamic voice channels"""
     global DYNAMIC_CATEGORY_ID
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
